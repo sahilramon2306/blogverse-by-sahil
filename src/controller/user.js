@@ -1,109 +1,78 @@
-const mongoose = require("mongoose");
-const userModel = require('../model/user');
-const tokenLib = require("../libs/tokenLib");
-const passwordLib = require("../libs/passwordLib");
-const responseLib = require("../libs/responseLib");
-const checkLib = require("../libs/checkLib");
-const axios = require('axios');
+const userModel = require('../model/user.js');
+const passwordLib = require("../libs/passwordLib.js")
+const tokenLib = require('../libs/tokenLib.js')
+require("dotenv").config(); // Ensure dotenv is loaded
 
+// User registration
+const registration = async (req, res) => {
+   const { name, email, password } = req.body;
+   const existingUser = await userModel.findOne({ email: email });
+    if (existingUser) {
+      return res.status(200).json({ success: false, message: "This email is already registered, try a new email." });
+    }
+    const hashedPassword = await passwordLib.getHashed(password);
+
+    let newUser = new userModel({
+       name: name,
+       email: email,
+       password: hashedPassword // Store hashed password
+    });
+    await newUser.save();
+    res.status(200).send({success: true, message:`User-${name}, registered successfully.`});
+} 
+
+//-------------------------------------------------------------------------------------------------
 
 // Login
 const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const userDetails = await userModel.findOne({email});
-    if(!userDetails){
-      const apiResponse = responseLib.generate(false,"email not registered",{});
-      return res.status(200).send(apiResponse);
-    }
-    if (await passwordLib.verify(password,userDetails.password)) {
-      console.log("Verified");
-      let payload = {
-        exp: "2 hours",
-        token: await tokenLib.generateToken(userDetails),
-      };
-      let apiResponse = responseLib.generate(true, "Verification successfull", payload);
-      res.status(200).send(apiResponse);
-    } else {
-      const apiResponse = responseLib.generate(false,"Incorrect password",{});
-      res.status(200).send(apiResponse);
-    }
-  } catch (err) {
-    const apiResponse = responseLib.generate(false, err.message, {});
-    res.status(500).send(apiResponse);
+  const { email, password } = req.body;
+  const existingUser = await userModel.findOne({ email });
+
+  if (!existingUser) {
+      return res.status(200).send({ success: false, message: "Email is not registered", data:{}});
   }
+  const isMatch = await passwordLib.passwordVerify(password,existingUser.password);
+
+  if (!isMatch) {
+      return res.status(200).send({ success: false, message: "Password is not match", data:{}});
+  }
+  const token = await tokenLib.generateToken(existingUser);
+  
+  res.status(200).json({success: true, message: "Login successful!", data:{token}});
 };
 
-//Registration
-const register = async (req, res) => {
-  try {
-    const { name, email, password, address } = req.body;
-    const isUserExist = await userModel.findOne({ email });
-    let hashedPassword = await passwordLib.hash(password);
-    if (isUserExist) {
-      const apiResponse = responseLib.generate(false, "This email is already registered", {});
-      return res.status(200).send(apiResponse);
-    }
+//-----------------------------------------------------------------------------------------------------
+//Password Update
+const updatePassword = async(req,res) => {
+  const {email,password} = req.body;
+  console.log(req.body);
+  const existingUser = await userModel.findOne({ email });
 
-    const userId = generateRandomId();
-    let newUser = new userModel({
-      userId: userId,
-      name: name,
-      password:hashedPassword,
-      email: email,
-      address: address
-    });
-
-    await newUser.save();
-
-    // Prepare the data to send to the services
-    const userData = {
-      userId,
-      name,
-      password:hashedPassword,
-      email,
-      address
-    };
-
-    // Define the service URLs
-    const service1Url = 'https://render-server-1oni.onrender.com/register';
-    const service2Url = 'http://13.127.17.195:5001/register';
-
-    try {
-      const service1Response = await axios.post(service1Url, userData);
-      console.log("Render server response:", service1Response.data);
-    } catch (err) {
-      console.error("Error with render server:", err.message);
-    }
-
-    try {
-      const service2Response = await axios.post(service2Url, userData);
-      console.log("AWS server response:", service2Response.data);
-    } catch (err) {
-      console.error("Error with AWS server:", err.message);
-    }
-
-    const apiResponse = { success: true, message: "User Registered Successfully", userId };
-    res.status(200).send(apiResponse);
-  } catch (err) {
-    const apiResponse = responseLib.generate(false, err.message, null);
-    res.status(500).send(apiResponse);
+  if (!existingUser) {
+      return res.status(400).json({ success: false, message: "Email is not registered." });
   }
-};
+  if(!password){
+    return res.status(400).send({success: false, message: "Provide proper data."});
+  }
+  const hashedPassword = await passwordLib.getHashed(password);
+  const updatepassword = await userModel.findOneAndUpdate(
+    { email: email },
+    { $set: { password: hashedPassword } },
+    { new: true }
+  );
 
+  if (!updatepassword) {
+    return res.status(404).send({success: false, message: `${email} does not exist in the database.`});
+  }
+  res.status(200).send({ success: true, message: "Password updated successfully", updatepassword });
 
-function generateRandomId() {
-  let min = 10000; // minimum value (inclusive)
-  let max = 99999; // maximum value (inclusive)
-
-  // Generate a random number between min and max
-  let randomId = Math.floor(Math.random() * (max - min + 1)) + min;
-
-  return randomId;
 }
 
 
+
+
 module.exports = {
+  registration: registration,
   login: login,
-  register: register
+  updatePassword : updatePassword
 };
